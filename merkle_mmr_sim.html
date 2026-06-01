@@ -1,0 +1,1568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live MMR Voting Simulation</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --panel-bg: rgba(30, 41, 59, 0.7);
+            --border: rgba(255, 255, 255, 0.1);
+            --text: #f8fafc;
+            --text-dim: #94a3b8;
+            --primary: #3b82f6;
+            --primary-hover: #2563eb;
+            --success: #10b981;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --leaf: #10b981;
+            --internal: #3b82f6;
+            --peak: #f59e0b;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Header */
+        header {
+            padding: 1rem 1.5rem;
+            background: var(--panel-bg);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            backdrop-filter: blur(10px);
+            z-index: 10;
+        }
+
+        h1 { font-size: 1.25rem; font-weight: 600; display: flex; align-items: center; gap: 0.5rem; }
+        h1 span { font-size: 0.875rem; padding: 0.2rem 0.5rem; background: var(--primary); border-radius: 4px; font-weight: 700; }
+
+        .status-badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 999px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            background: rgba(255,255,255,0.1);
+        }
+        .status-badge.running { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.5); }
+        .status-badge.tampered { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.5); }
+
+        /* Main Layout */
+        main {
+            flex: 1;
+            display: grid;
+            grid-template-columns: 240px minmax(0, 1fr) 240px;
+            grid-template-rows: 1fr;
+            overflow: hidden;
+        }
+
+        /* Panels */
+        .panel {
+            background: var(--panel-bg);
+            border-right: 1px solid var(--border);
+            border-left: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            backdrop-filter: blur(10px);
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            padding: 1rem;
+            font-weight: 600;
+            border-bottom: 1px solid var(--border);
+            background: rgba(0,0,0,0.2);
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-dim);
+        }
+
+        .panel-content { padding: 1rem; overflow-y: auto; flex: 1; }
+
+        /* Controls */
+        .control-group { margin-bottom: 1.5rem; }
+        .control-group label { display: block; font-size: 0.875rem; color: var(--text-dim); margin-bottom: 0.5rem; }
+        
+        input[type="number"], input[type="text"], select {
+            width: 100%;
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 0.5rem;
+            border-radius: 4px;
+            font-family: inherit;
+            margin-bottom: 0.5rem;
+        }
+
+        button {
+            width: 100%;
+            padding: 0.5rem 1rem;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+            font-weight: 500;
+            transition: all 0.2s;
+            margin-bottom: 0.5rem;
+        }
+        button:hover { background: rgba(255,255,255,0.1); }
+        button.primary { background: var(--primary); border-color: var(--primary); }
+        button.primary:hover { background: var(--primary-hover); }
+        button.danger { background: var(--danger); border-color: var(--danger); }
+        button.success { background: var(--success); border-color: var(--success); }
+
+        .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+
+        /* Visualization Area */
+        #viz-container {
+            position: relative;
+            background: radial-gradient(circle at center, #1e293b 0%, #0f172a 100%);
+            overflow: hidden;
+            min-width: 0;
+        }
+        
+        #viz-overlay {
+            position: absolute;
+            top: 1rem; left: 1rem;
+            pointer-events: none;
+        }
+        .viz-stat { font-size: 0.875rem; color: var(--text-dim); margin-bottom: 0.25rem; }
+        .viz-stat span { font-family: monospace; color: var(--text); font-size: 1rem; }
+
+        /* SVG Styles */
+        .node circle { fill: var(--bg); stroke-width: 2px; }
+        .node text { font-family: monospace; font-size: 9px; fill: var(--text); text-anchor: middle; pointer-events: none; }
+        .link { fill: none; stroke: var(--border); stroke-width: 1.5px; }
+        
+        .node.leaf circle { stroke: var(--leaf); }
+        .node.internal circle { stroke: var(--internal); }
+        .node.peak circle { stroke: var(--peak); fill: rgba(245, 158, 11, 0.1); }
+        .node.tampered circle { stroke: var(--danger); fill: rgba(239, 68, 68, 0.2); }
+        .node.highlight circle { stroke: var(--warning); stroke-width: 3px; fill: rgba(245, 158, 11, 0.3); }
+        .node.smt-voted circle { stroke: var(--danger); fill: rgba(239, 68, 68, 0.18); }
+        .node.smt-unvoted circle { stroke: var(--success); fill: rgba(16, 185, 129, 0.18); }
+        .node.smt-path circle { stroke: var(--warning); stroke-width: 4px; fill: rgba(245, 158, 11, 0.28); }
+        .node.proof-current circle { stroke: var(--warning); fill: rgba(245, 158, 11, 0.22); stroke-width: 3px; }
+        .node.proof-sibling circle { stroke: var(--text-dim); fill: rgba(148, 163, 184, 0.12); }
+        .node.proof-empty circle { stroke: var(--success); fill: rgba(16, 185, 129, 0.15); stroke-dasharray: 3 3; }
+        .link.highlight { stroke: var(--warning); stroke-width: 3px; }
+        .link.smt-path { stroke: var(--warning); stroke-width: 3px; }
+        #node-detail-panel {
+            position: absolute;
+            right: 1rem;
+            top: 1rem;
+            width: min(340px, calc(100% - 2rem));
+            z-index: 9;
+            display: none;
+            padding: 0.9rem;
+            background: rgba(15, 23, 42, 0.96);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-shadow: 0 16px 38px rgba(0,0,0,0.38);
+            font-size: 0.82rem;
+        }
+        #node-detail-panel .detail-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 0.65rem;
+            font-weight: 700;
+        }
+        #node-detail-panel .detail-close {
+            width: auto;
+            margin: 0;
+            padding: 0.1rem 0.35rem;
+            background: transparent;
+            border: 0;
+            color: var(--text-dim);
+            font-size: 1.1rem;
+        }
+        #node-detail-panel .detail-row {
+            display: grid;
+            grid-template-columns: 76px 1fr;
+            gap: 0.6rem;
+            margin: 0.32rem 0;
+            font-family: monospace;
+        }
+        #node-detail-panel .detail-label { color: var(--text-dim); }
+        #node-detail-panel .detail-value { word-break: break-all; }
+        #node-detail-panel button.primary { margin-top: 0.75rem; }
+
+        /* Snapshot Gallery */
+        .snapshot-card {
+            background: rgba(0,0,0,0.2);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.75rem;
+            margin-bottom: 0.75rem;
+        }
+        .snapshot-card.tampered { border-color: var(--danger); background: rgba(239,68,68,0.1); }
+        .snapshot-header { display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-size: 0.875rem; }
+        .snapshot-badge { padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+        .badge-pass { background: rgba(16,185,129,0.2); color: #34d399; }
+        .badge-fail { background: rgba(239,68,68,0.2); color: #f87171; }
+        .snapshot-detail { font-family: monospace; font-size: 0.75rem; color: var(--text-dim); word-break: break-all; }
+
+        /* Bottom Bar */
+        footer {
+            background: var(--panel-bg);
+            border-top: 1px solid var(--border);
+            padding: 1rem 1.5rem;
+            display: flex;
+            gap: 2rem;
+            align-items: center;
+            backdrop-filter: blur(10px);
+            z-index: 10;
+        }
+        
+        .stat-box { display: flex; flex-direction: column; }
+        .stat-label { font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+        .stat-value { font-size: 1.5rem; font-weight: 700; font-family: monospace; }
+        
+        .tally-container { flex: 1; display: flex; gap: 1rem; overflow-x: auto; }
+        .tally-item {
+            background: rgba(0,0,0,0.2);
+            border: 1px solid var(--border);
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .tally-cand { font-size: 0.875rem; font-weight: 500; }
+        .tally-count { font-family: monospace; font-size: 1.125rem; font-weight: 700; color: var(--primary); }
+
+        /* Modals */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(4px);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+        .modal {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            width: 100%; max-width: 500px;
+            max-height: 90vh;
+            display: flex; flex-direction: column;
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
+        }
+        .modal.large { max-width: 800px; }
+        .modal-header { padding: 1rem 1.5rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+        .modal-title { font-weight: 600; font-size: 1.125rem; }
+        .modal-close { cursor: pointer; color: var(--text-dim); background: none; border: none; font-size: 1.5rem; line-height: 1; padding: 0; width: auto; }
+        .modal-close:hover { color: var(--text); background: none; }
+        .modal-body { padding: 1.5rem; overflow-y: auto; }
+        .modal-footer { padding: 1rem 1.5rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.5rem; }
+
+        /* Tables */
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border); font-size: 0.875rem; }
+        th { color: var(--text-dim); font-weight: 500; background: rgba(0,0,0,0.2); }
+        td { font-family: monospace; }
+        tr:hover td { background: rgba(255,255,255,0.05); cursor: pointer; }
+
+        /* Utilities */
+        .hidden { display: none !important; }
+        .text-danger { color: var(--danger); }
+        .text-success { color: var(--success); }
+        .proof-log {
+            margin-top: 1rem;
+            padding: 0.75rem;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: rgba(0,0,0,0.22);
+            font-family: monospace;
+            font-size: 0.78rem;
+            line-height: 1.6;
+            max-height: 220px;
+            overflow-y: auto;
+        }
+        #proof-panel {
+            position: absolute;
+            left: 1rem;
+            right: 1rem;
+            bottom: 1rem;
+            max-height: 170px;
+            margin: 0;
+            z-index: 8;
+            display: none;
+            box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+        }
+        .viz-tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+            pointer-events: auto;
+        }
+        .viz-tabs button {
+            width: auto;
+            margin: 0;
+            padding: 0.35rem 0.6rem;
+            font-size: 0.75rem;
+        }
+        .viz-tabs button.active { background: var(--primary); border-color: var(--primary); }
+
+        /* Node Tooltip */
+        #node-tooltip {
+            position: fixed;
+            pointer-events: none;
+            background: rgba(15, 23, 42, 0.97);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.6rem 0.85rem;
+            font-size: 0.78rem;
+            font-family: monospace;
+            color: var(--text);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            z-index: 200;
+            max-width: 620px;
+            display: none;
+            line-height: 1.6;
+        }
+        #node-tooltip .tt-title {
+            font-family: 'Inter', sans-serif;
+            font-weight: 600;
+            font-size: 0.8rem;
+            margin-bottom: 0.3rem;
+            color: var(--primary);
+        }
+        #node-tooltip .tt-row { display: flex; gap: 0.5rem; }
+        #node-tooltip .tt-label { color: var(--text-dim); min-width: 60px; }
+        #tt-hash { word-break: break-all; }
+
+        /* Registry count badge */
+        .reg-badge {
+            display: inline-block;
+            background: rgba(59,130,246,0.2);
+            border: 1px solid rgba(59,130,246,0.4);
+            border-radius: 999px;
+            padding: 0.15rem 0.5rem;
+            font-size: 0.75rem;
+            font-family: monospace;
+            color: var(--primary);
+            margin-left: 0.4rem;
+            vertical-align: middle;
+        }
+
+        /* Reg-running pulse */
+        @keyframes pulse-border {
+            0%, 100% { border-color: rgba(16,185,129,0.3); }
+            50%       { border-color: rgba(16,185,129,0.9); }
+        }
+        .btn-reg-running { animation: pulse-border 1s infinite; border-color: var(--success) !important; }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>MMR <span>Simulation</span></h1>
+        <div id="sys-status" class="status-badge">IDLE</div>
+    </header>
+
+    <main>
+        <!-- Left Panel: Configuration & Controls -->
+        <aside class="panel">
+            <div class="panel-header">Configuration</div>
+            <div class="panel-content">
+                <div class="control-group">
+                    <label>Dataset File</label>
+                    <input type="text" id="cfg-path" value="data/dataset.csv">
+                    <button id="btn-load">Load Dataset</button>
+                </div>
+                
+                <div class="control-group" style="border-top: 1px solid var(--border); padding-top: 1rem;">
+                    <label>Audit Interval (Votes)</label>
+                    <input type="number" id="cfg-interval" value="10" min="1">
+                    <label>Max Votes (Optional)</label>
+                    <input type="number" id="cfg-max" placeholder="e.g. 50">
+                    <button id="btn-config" class="primary">Apply Config</button>
+                </div>
+
+                <div class="panel-header" style="margin: 1rem -1rem; border-top: 1px solid var(--border);">Voter Registry <span class="reg-badge" id="badge-reg-count">0</span></div>
+
+                <div class="btn-grid" style="margin-bottom: 0.5rem;">
+                    <button id="btn-auto-register" class="success">⚡ Auto Register</button>
+                    <button id="btn-stop-register">■ Stop Register</button>
+                </div>
+                <button id="btn-register-modal" style="border-color: var(--primary); color: var(--primary); margin-bottom: 0.5rem;">+ Manual Register</button>
+                <button id="btn-registry-modal" style="margin-bottom: 1rem;">👁 View Registry</button>
+
+                <div class="panel-header" style="margin: 1rem -1rem; border-top: 1px solid var(--border);">Voting Controls</div>
+                
+                <div class="btn-grid">
+                    <button id="btn-step">Step (1 Vote)</button>
+                    <button id="btn-run" class="success">▶ Auto Vote</button>
+                    <button id="btn-stop">■ Stop</button>
+                    <button id="btn-reset" class="danger">Reset</button>
+                </div>
+
+                <div style="margin-top: 1rem;">
+                    <button id="btn-vote-modal" style="border-color: var(--primary); color: var(--primary);">+ Manual Vote</button>
+                    <button id="btn-verify-modal" class="hidden">Audit / Verify Path</button>
+                    <button id="btn-tamper-modal" class="danger">Inject Tamper (Leaf)</button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Center: Visualization -->
+        <section id="viz-container">
+            <div id="viz-overlay">
+                <div class="viz-stat">Root Hash: <span id="viz-root">...</span></div>
+                <div class="viz-stat">Peaks: <span id="viz-peaks">0</span></div>
+                <div class="viz-tabs">
+                    <button id="tab-mmr" class="active">MMR</button>
+                    <button id="tab-smt">Sparse Merkle</button>
+                </div>
+            </div>
+            <svg id="mmr-svg" width="100%" height="100%"></svg>
+            <div id="node-detail-panel"></div>
+            <div id="proof-panel" class="proof-log"></div>
+        </section>
+
+        <!-- Right Panel: Snapshot Gallery -->
+        <aside class="panel">
+            <div class="panel-header">Audit Gallery</div>
+            <div class="panel-content" id="snapshot-container">
+                <!-- Snapshots injected here -->
+                <div style="color: var(--text-dim); font-size: 0.875rem; text-align: center; margin-top: 2rem;">No audits yet. Run simulation to generate snapshots.</div>
+            </div>
+        </aside>
+    </main>
+
+    <!-- Bottom Bar: Stats -->
+    <footer>
+        <div class="stat-box">
+            <div class="stat-label">Total Votes</div>
+            <div class="stat-value" id="stat-total">0</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Verified (Last Audit)</div>
+            <div class="stat-value text-success" id="stat-verified">0</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Registered Voters</div>
+            <div class="stat-value" style="color: var(--primary);" id="stat-registered">0</div>
+        </div>
+        <div style="width: 1px; height: 30px; background: var(--border); margin: 0 1rem;"></div>
+        
+        <div class="tally-container" id="tally-container">
+            <!-- Tally injected here -->
+        </div>
+    </footer>
+
+    <!-- Node hover tooltip -->
+    <div id="node-tooltip">
+        <div class="tt-title" id="tt-type">Node</div>
+        <div class="tt-row"><span class="tt-label">Hash:</span><span id="tt-hash"></span></div>
+        <div class="tt-row"><span class="tt-label">Height:</span><span id="tt-height"></span></div>
+        <div id="tt-voter-row" class="tt-row"><span class="tt-label">Voter:</span><span id="tt-voter"></span></div>
+        <div id="tt-cand-row" class="tt-row"><span class="tt-label">Candidate:</span><span id="tt-cand"></span></div>
+        <div id="tt-path-row" class="tt-row"><span class="tt-label">Path:</span><span id="tt-path"></span></div>
+        <div id="tt-status-row" class="tt-row"><span class="tt-label">Status:</span><span id="tt-status"></span></div>
+    </div>
+
+    <!-- Modals -->
+    
+    <!-- Manual Register Modal -->
+    <div class="modal-overlay" id="modal-register">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">Register Voter</div>
+                <button class="modal-close" onclick="closeModal('modal-register')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="control-group">
+                    <label>Voter ID</label>
+                    <input type="text" id="reg-voter-id" placeholder="e.g. VOTER-001">
+                </div>
+                <p style="font-size:0.8rem; color:var(--text-dim);">This adds the voter to the registry. They will then be eligible to vote during auto-voting.</p>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeModal('modal-register')" style="width:auto;">Cancel</button>
+                <button id="btn-submit-register" class="primary" style="width:auto;">Register</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- View Registry Modal -->
+    <div class="modal-overlay" id="modal-registry">
+        <div class="modal large">
+            <div class="modal-header">
+                <div class="modal-title">Voter Registry</div>
+                <button class="modal-close" onclick="closeModal('modal-registry')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size:0.875rem; color:var(--text-dim); margin-bottom:1rem;">
+                    Registered voters: <strong id="reg-total-count">0</strong>
+                </p>
+                <div style="max-height:450px; overflow-y:auto; border:1px solid var(--border); border-radius:4px;">
+                    <table id="registry-table">
+                        <thead><tr><th>#</th><th>Voter ID</th><th>Status</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Vote Modal -->
+    <div class="modal-overlay" id="modal-vote">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">Cast Manual Vote</div>
+                <button class="modal-close" onclick="closeModal('modal-vote')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="control-group">
+                    <label>Voter ID</label>
+                    <input type="text" id="manual-voter" value="MANUAL-001">
+                </div>
+                <div class="control-group">
+                    <label>Select Candidate</label>
+                    <select id="manual-candidate">
+                        <!-- populated dynamically -->
+                    </select>
+                </div>
+                <div id="vote-proof-area" class="proof-log hidden"></div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeModal('modal-vote')" style="width: auto;">Cancel</button>
+                <button id="btn-submit-vote" class="primary" style="width: auto;">Cast Vote</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tamper Modal -->
+    <div class="modal-overlay" id="modal-tamper">
+        <div class="modal large">
+            <div class="modal-header">
+                <div class="modal-title">Inject Data Corruption (Tamper)</div>
+                <button class="modal-close" onclick="closeModal('modal-tamper')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size: 0.875rem; color: var(--text-dim); margin-bottom: 1rem;">Select a cast vote to tamper with. This will modify the leaf hash directly without updating ancestors, creating an inconsistency that the next interval audit should catch and rollback.</p>
+                <div style="max-height: 400px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px;">
+                    <table id="tamper-table">
+                        <thead>
+                            <tr><th>Index</th><th>Voter ID</th><th>Candidate</th><th>Leaf Hash (Prefix)</th></tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div id="tamper-action-area" class="hidden" style="margin-top: 1rem; padding: 1rem; background: rgba(239,68,68,0.1); border: 1px solid var(--danger); border-radius: 4px;">
+                    <div style="font-weight: 600; margin-bottom: 0.5rem;">Tamper Vote #<span id="tamper-sel-idx"></span></div>
+                    <div style="display: flex; gap: 1rem; align-items: center;">
+                        <span style="font-family: monospace;" id="tamper-sel-info"></span>
+                        <span style="color: var(--text-dim);">➜ Change to:</span>
+                        <select id="tamper-candidate" style="width: auto; margin: 0;"></select>
+                        <button id="btn-submit-tamper" class="danger" style="width: auto; margin: 0;">Apply Corruption</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Verify Modal -->
+    <div class="modal-overlay" id="modal-verify">
+        <div class="modal large">
+            <div class="modal-header">
+                <div class="modal-title">Verify Vote Path</div>
+                <button class="modal-close" onclick="closeModal('modal-verify')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size: 0.875rem; color: var(--text-dim); margin-bottom: 1rem;">Select a vote to request its Merkle proof. The backend will return the intra-peak sibling hashes and peak bagging hashes required to reconstruct the root.</p>
+                <div style="max-height: 300px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; margin-bottom: 1rem;">
+                    <table id="verify-table">
+                        <thead>
+                            <tr><th>Index</th><th>Voter ID</th><th>Candidate</th><th>Leaf Hash</th></tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div id="verify-result-area" class="hidden" style="padding: 1rem; background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 4px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                        <div style="font-weight: 600;">Proof Result for Vote #<span id="vrf-idx"></span></div>
+                        <div id="vrf-badge" class="snapshot-badge"></div>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; font-family: monospace; font-size: 0.875rem;">
+                        <div>
+                            <div style="color: var(--text-dim);">Reconstructed Root:</div>
+                            <div id="vrf-root" style="color: var(--primary);"></div>
+                        </div>
+                        <div>
+                            <div style="color: var(--text-dim);">Proof Steps:</div>
+                            <div id="vrf-steps"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Global State ---
+        let simState = {};
+        let candidates = [];
+        let pollingInterval = null;
+        let lastLeafCount = -1;
+        let lastSmtRoot = "";
+        let manualVoteIndex = 1;
+        let currentViz = "mmr";
+        let activeSmtPath = [];
+        let smtRenderVersion = 0;
+        let smtAnimationBusy = false;
+        let pendingSmtRender = null;
+        let selectedMmrLeaf = null;
+
+        // --- D3 Setup ---
+        const svg = d3.select("#mmr-svg");
+        const svgGroup = svg.append("g");
+        
+        // Zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 4])
+            .on("zoom", (e) => svgGroup.attr("transform", e.transform));
+        svg.call(zoom);
+
+        // --- API Helpers ---
+        async function apiCall(endpoint) {
+            try {
+                const res = await fetch(endpoint);
+                if (!res.ok) throw new Error("HTTP " + res.status);
+                return await res.json();
+            } catch (e) {
+                console.error("API Error on", endpoint, e);
+                return null;
+            }
+        }
+
+        function shortHash(value, len = 16) {
+            return value && value.length > len ? value.substring(0, len) + "..." : (value || "");
+        }
+
+        // --- UI Updates ---
+        async function updateDashboard() {
+            const state = await apiCall('/api/state');
+            if (!state) {
+                document.getElementById('sys-status').textContent = "OFFLINE";
+                document.getElementById('sys-status').className = "status-badge tampered";
+                return;
+            }
+            simState = state;
+
+            // Status badge
+            const statusEl = document.getElementById('sys-status');
+            if (state.tampered) {
+                statusEl.textContent = "TAMPER DETECTED";
+                statusEl.className = "status-badge tampered";
+            } else if (state.running) {
+                statusEl.textContent = "RUNNING";
+                statusEl.className = "status-badge running";
+            } else {
+                statusEl.textContent = "IDLE";
+                statusEl.className = "status-badge";
+            }
+
+            // Stats
+            document.getElementById('stat-total').textContent = state.leafCount;
+            document.getElementById('stat-verified').textContent = state.verifiedCount;
+            document.getElementById('stat-registered').textContent = state.registeredCount || 0;
+            document.getElementById('badge-reg-count').textContent = state.registeredCount || 0;
+            document.getElementById('viz-root').textContent = shortHash(currentViz === "smt" ? state.smtRoot : state.root) || "empty";
+            document.getElementById('viz-peaks').textContent = currentViz === "smt" ? (state.smtNodes || 0) : state.peakCount;
+
+            // Auto-register button pulse
+            const btnAutoReg = document.getElementById('btn-auto-register');
+            if (state.regRunning) {
+                btnAutoReg.classList.add('btn-reg-running');
+                btnAutoReg.textContent = '⚡ Registering…';
+            } else {
+                btnAutoReg.classList.remove('btn-reg-running');
+                btnAutoReg.textContent = '⚡ Auto Register';
+            }
+
+            // Tally
+            const tallyContainer = document.getElementById('tally-container');
+            tallyContainer.innerHTML = '';
+            for (const [cand, count] of Object.entries(state.tally || {})) {
+                tallyContainer.innerHTML += `
+                    <div class="tally-item">
+                        <div class="tally-cand">${cand}</div>
+                        <div class="tally-count">${count}</div>
+                    </div>
+                `;
+            }
+
+            // Fetch candidates list if needed
+            if (candidates.length === 0) {
+                const cands = await apiCall('/api/candidates');
+                if (cands) {
+                    candidates = cands;
+                    populateCandidateDropdowns();
+                }
+            }
+
+            // Update Gallery and Viz if changed
+            if (state.leafCount !== lastLeafCount || state.smtRoot !== lastSmtRoot || state.tampered) {
+                updateGallery();
+                updateVisualization();
+                lastLeafCount = state.leafCount;
+                lastSmtRoot = state.smtRoot || "";
+            }
+        }
+
+        async function updateGallery() {
+            const logs = await apiCall('/api/auditlog');
+            const container = document.getElementById('snapshot-container');
+            if (!logs || logs.length === 0) {
+                container.innerHTML = `<div style="color: var(--text-dim); font-size: 0.875rem; text-align: center; margin-top: 2rem;">No audits yet.</div>`;
+                return;
+            }
+            
+            // Reverse to show newest first
+            logs.reverse();
+            
+            container.innerHTML = logs.map(l => `
+                <div class="snapshot-card ${l.tamper ? 'tampered' : ''}">
+                    <div class="snapshot-header">
+                        <span>Audit #${l.num} (Votes: ${l.leaves})</span>
+                        <span class="snapshot-badge ${l.tamper ? 'badge-fail' : 'badge-pass'}">
+                            ${l.tamper ? 'ROLLBACK' : 'PASSED'}
+                        </span>
+                    </div>
+                    <div class="snapshot-detail">Root: ${l.root}...</div>
+                    ${l.tamper ? `<div class="snapshot-detail text-danger" style="margin-top:4px">Invalidated from: ${l.invalidFrom}</div>` : ''}
+                </div>
+            `).join('');
+        }
+
+        // --- D3 Visualization ---
+        const tooltip = document.getElementById('node-tooltip');
+
+        function showTooltip(event, d, leafMap) {
+            const isLeaf = !d.children;
+            const isPeak = d.depth === 0 && !!d.children;
+            const typeLabel = isPeak ? '⛰ Peak Node' : isLeaf ? '🍃 Leaf Node' : '🔵 Internal Node';
+            document.getElementById('tt-type').textContent = typeLabel;
+            document.getElementById('tt-hash').textContent = d.data.h;
+            document.getElementById('tt-height').textContent = d.data.ht;
+
+            const voterRow = document.getElementById('tt-voter-row');
+            const candRow  = document.getElementById('tt-cand-row');
+            const pathRow = document.getElementById('tt-path-row');
+            const statusRow = document.getElementById('tt-status-row');
+            pathRow.style.display = 'none';
+            statusRow.style.display = 'none';
+            if (isLeaf && leafMap && leafMap[d.data.h]) {
+                const lf = leafMap[d.data.h];
+                document.getElementById('tt-voter').textContent = lf.v;
+                document.getElementById('tt-cand').textContent  = lf.c;
+                voterRow.style.display = '';
+                candRow.style.display  = '';
+            } else {
+                voterRow.style.display = 'none';
+                candRow.style.display  = 'none';
+            }
+            tooltip.style.display = 'block';
+            moveTooltip(event);
+        }
+
+        function moveTooltip(event) {
+            const x = event.clientX + 14;
+            const y = event.clientY - 10;
+            tooltip.style.left = x + 'px';
+            tooltip.style.top  = y + 'px';
+        }
+
+        function showSmtTooltip(event, d, entryByHash) {
+            const entry = entryByHash[d.data.h];
+            document.getElementById('tt-type').textContent = d.children ? 'Sparse Internal Node' : 'Sparse Leaf Node';
+            document.getElementById('tt-hash').textContent = d.data.h;
+            document.getElementById('tt-height').textContent = `depth ${d.data.d}`;
+
+            const voterRow = document.getElementById('tt-voter-row');
+            const candRow  = document.getElementById('tt-cand-row');
+            const pathRow = document.getElementById('tt-path-row');
+            const statusRow = document.getElementById('tt-status-row');
+            candRow.style.display = 'none';
+            document.getElementById('tt-path').textContent = d.data.id || 'root';
+            pathRow.style.display = '';
+
+            if (entry) {
+                document.getElementById('tt-voter').textContent = entry.voter;
+                document.getElementById('tt-status').textContent = entry.hasVoted ? 'Registered, already voted' : 'Registered, not voted';
+                voterRow.style.display = '';
+                statusRow.style.display = '';
+            } else {
+                voterRow.style.display = 'none';
+                statusRow.style.display = 'none';
+            }
+
+            tooltip.style.display = 'block';
+            moveTooltip(event);
+        }
+
+        function hideTooltip() {
+            tooltip.style.display = 'none';
+        }
+
+        function hideNodeDetailPanel() {
+            selectedMmrLeaf = null;
+            document.getElementById('node-detail-panel').style.display = 'none';
+        }
+
+        function showNodeDetailPanel(leafInfo) {
+            selectedMmrLeaf = leafInfo;
+            const panel = document.getElementById('node-detail-panel');
+            panel.innerHTML = `
+                <div class="detail-head">
+                    <span>Vote Leaf #${leafInfo.i}</span>
+                    <button class="detail-close" onclick="hideNodeDetailPanel()">×</button>
+                </div>
+                <div class="detail-row"><span class="detail-label">Voter</span><span class="detail-value">${leafInfo.v}</span></div>
+                <div class="detail-row"><span class="detail-label">Candidate</span><span class="detail-value">${leafInfo.c}</span></div>
+                <div class="detail-row"><span class="detail-label">Hash</span><span class="detail-value">${leafInfo.h}</span></div>
+                <button class="primary" onclick="verifySelectedMmrLeaf()">Verify Proof Path</button>
+            `;
+            panel.style.display = 'block';
+        }
+
+        function highlightMmrPath(leafDatum) {
+            svgGroup.selectAll(".node").classed("highlight", false);
+            svgGroup.selectAll(".link").classed("highlight", false);
+
+            let cur = leafDatum;
+            while (cur) {
+                svgGroup.selectAll(".node")
+                    .filter(d => d === cur)
+                    .classed("highlight", true);
+
+                if (cur.parent) {
+                    const parent = cur.parent;
+                    svgGroup.selectAll(".link")
+                        .filter(d => d.source === parent && d.target === cur)
+                        .classed("highlight", true);
+                }
+                cur = cur.parent;
+            }
+        }
+
+        async function verifySelectedMmrLeaf() {
+            if (!selectedMmrLeaf) return;
+            const res = await apiCall(`/api/verify?index=${selectedMmrLeaf.i}`);
+            showMmrProof(res);
+        }
+
+        function showMmrProof(res) {
+            const area = document.getElementById('proof-panel');
+            area.style.display = 'block';
+            if (!res || !res.ok) {
+                area.innerHTML = `<div class="text-danger">Verification failed: ${res ? res.error : "server unavailable"}</div>`;
+                return;
+            }
+
+            const verdict = res.verified ? "VERIFIED" : "FAILED";
+            const cls = res.verified ? "text-success" : "text-danger";
+            const rows = (res.steps || []).map((s, i) => {
+                const expr = s.dir === "R"
+                    ? `${shortHash(s.current, 18)} + ${shortHash(s.sibling, 18)}`
+                    : `${shortHash(s.sibling, 18)} + ${shortHash(s.current, 18)}`;
+                return `[${i + 1}] ${expr} => ${shortHash(s.result, 18)}`;
+            }).join("<br>");
+            const bagRows = (res.bagSteps || []).map((s, i) =>
+                `[peak ${i + 1}] ${shortHash(s.left, 18)} + ${shortHash(s.right, 18)} => ${shortHash(s.result, 18)}`
+            ).join("<br>");
+
+            area.innerHTML = `
+                <div class="${cls}" style="font-weight:700; margin-bottom:0.5rem;">${verdict} - Vote #${res.leafIndex}</div>
+                <div>Voter: ${res.voter} | Candidate: ${res.candidate}</div>
+                <div>Leaf: ${shortHash(res.leafHash, 24)} | Root: ${shortHash(res.root, 24)}</div>
+                <div style="margin-top:0.6rem; color:var(--text-dim);">Leaf-to-peak comparisons</div>
+                <div>${rows || "Leaf is already a peak."}</div>
+                <div style="margin-top:0.6rem; color:var(--text-dim);">Peak bagging comparisons</div>
+                <div>${bagRows || "Only one peak, no bagging needed."}</div>
+            `;
+        }
+
+        function smtNodeKey(d) {
+            return d.data.id || "root";
+        }
+
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        function pseudoParentHash(left, right, rootHash, isRoot) {
+            if (isRoot && rootHash) return rootHash;
+            const seed = `${left.h}|${right ? right.h : left.h}`;
+            let hash = 2166136261;
+            for (let i = 0; i < seed.length; ++i) {
+                hash ^= seed.charCodeAt(i);
+                hash = Math.imul(hash, 16777619);
+            }
+            return `node${(hash >>> 0).toString(16).padStart(8, "0")}`;
+        }
+
+        function buildSmtVectorLayers(data, cw) {
+            const entries = [...(data.entries || [])].sort((a, b) => a.key - b.key);
+            if (entries.length === 0) return { layers: [], nodes: [], links: [] };
+
+            const gap = Math.max(76, Math.min(118, cw / Math.max(entries.length, 1)));
+            const rowGap = 82;
+            let current = entries.map((entry, i) => ({
+                id: `leaf-${i}`,
+                h: entry.hash,
+                short: shortHash(entry.hash, 10),
+                d: data.depth,
+                entry,
+                level: 0,
+                x: i * gap,
+                y: 0
+            }));
+
+            const layers = [current];
+            while (current.length > 1) {
+                const next = [];
+                const isRootLayer = current.length <= 2;
+                for (let i = 0; i < current.length; i += 2) {
+                    const left = current[i];
+                    const right = current[i + 1] || current[i];
+                    const h = pseudoParentHash(left, right, data.root, isRootLayer && i === 0);
+                    next.push({
+                        id: `layer-${layers.length}-${Math.floor(i / 2)}`,
+                        h,
+                        short: shortHash(h, 10),
+                        d: Math.max(0, data.depth - layers.length),
+                        level: layers.length,
+                        childrenRefs: right === left ? [left] : [left, right],
+                        x: (left.x + right.x) / 2,
+                        y: 0
+                    });
+                }
+                layers.push(next);
+                current = next;
+            }
+
+            const totalLevels = layers.length;
+            layers.forEach((layer, level) => {
+                layer.forEach(node => {
+                    node.y = (totalLevels - 1 - level) * rowGap;
+                });
+            });
+
+            const links = [];
+            for (let level = 1; level < layers.length; ++level) {
+                layers[level].forEach(parent => {
+                    parent.childrenRefs.forEach(child => {
+                        links.push({ source: parent, target: child, parentLevel: level });
+                    });
+                });
+            }
+
+            return { layers, nodes: layers.flat(), links };
+        }
+
+        async function updateVisualization() {
+            if (currentViz === "smt") {
+                await updateSparseVisualization(activeSmtPath);
+                return;
+            }
+            const treeData = await apiCall('/api/tree');
+            if (!treeData || !treeData.peaks || treeData.peaks.length === 0) {
+                svgGroup.selectAll("*").remove();
+                return;
+            }
+
+            // Build hash → leaf metadata lookup
+            const leafMap = {};
+            if (treeData.leaves) {
+                treeData.leaves.forEach(lf => { leafMap[lf.h] = lf; });
+            }
+
+            svgGroup.selectAll("*").remove();
+
+            const margin = {top: 40, right: 20, bottom: 40, left: 20};
+            let currentX = margin.left;
+            const nodeRadius = 11;
+
+            for (let i = 0; i < treeData.peaks.length; i++) {
+                const peakData = treeData.peaks[i];
+                if (!peakData) continue;
+
+                const root = d3.hierarchy(peakData, d => {
+                    const children = [];
+                    if (d.l) children.push(d.l);
+                    if (d.r) children.push(d.r);
+                    return children.length ? children : null;
+                });
+
+                const treeWidth = Math.pow(2, peakData.ht) * 34;
+                const treeHeight = peakData.ht * 56;
+
+                const treeLayout = d3.tree().size([treeWidth, treeHeight]);
+                treeLayout(root);
+
+                const g = svgGroup.append("g")
+                    .attr("transform", `translate(${currentX}, ${margin.top})`);
+
+                g.selectAll(".link")
+                    .data(root.links())
+                    .enter().append("path")
+                    .attr("class", "link")
+                    .attr("d", d3.linkVertical().x(d => d.x).y(d => d.y));
+
+                const node = g.selectAll(".node")
+                    .data(root.descendants())
+                    .enter().append("g")
+                    .attr("class", d => {
+                        let cls = "node ";
+                        if (!d.children) cls += "leaf ";
+                        else if (d.depth === 0) cls += "peak ";
+                        else cls += "internal ";
+                        return cls;
+                    })
+                    .attr("transform", d => `translate(${d.x},${d.y})`)
+                    .style("cursor", d => (!d.children && leafMap[d.data.h]) ? "pointer" : "default")
+                    .on("mouseover", (event, d) => showTooltip(event, d, leafMap))
+                    .on("mousemove", moveTooltip)
+                    .on("mouseleave", hideTooltip)
+                    .on("click", (event, d) => {
+                        const leafInfo = !d.children ? leafMap[d.data.h] : null;
+                        if (!leafInfo) return;
+                        event.stopPropagation();
+                        hideTooltip();
+                        showNodeDetailPanel(leafInfo);
+                        highlightMmrPath(d);
+                    });
+
+                node.append("circle").attr("r", nodeRadius);
+                node.append("text")
+                    .attr("dy", "0.3em")
+                    .text(d => (d.data.short || d.data.h).substring(0, 4) + "..");
+
+                currentX += treeWidth + 40;
+            }
+
+            // Auto-center (if it's not too wide, or just fit to screen)
+            const bounds = svgGroup.node().getBBox();
+            const fullWidth = bounds.width + margin.left * 2;
+            const fullHeight = bounds.height + margin.top * 2;
+            
+            const svgEl = document.getElementById('mmr-svg');
+            const cw = svgEl.clientWidth;
+            const ch = svgEl.clientHeight;
+
+            const scale = Math.min(cw / fullWidth, ch / fullHeight, 0.86);
+            const tx = (cw - fullWidth * scale) / 2;
+            const ty = (ch - fullHeight * scale) / 2 + margin.top;
+
+            // Only animate transition if we are running smoothly
+            svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+        }
+
+        function highlightProofPath(proof) {
+            activeSmtPath = proof && proof.path ? proof.path : [];
+            currentViz = "smt";
+            document.getElementById('tab-mmr').classList.remove('active');
+            document.getElementById('tab-smt').classList.add('active');
+            updateSparseVisualization(activeSmtPath);
+        }
+
+        function rememberProofPath(proof) {
+            activeSmtPath = proof && proof.path ? proof.path : [];
+            if (currentViz === "smt") {
+                updateSparseVisualization(activeSmtPath);
+            }
+        }
+
+        function drawSmtProofVisualization(proof) {
+            if (!proof || !proof.steps) return;
+            currentViz = "smt";
+            document.getElementById('tab-mmr').classList.remove('active');
+            document.getElementById('tab-smt').classList.add('active');
+            svgGroup.selectAll("*").remove();
+
+            const steps = proof.steps;
+            const rowGap = 66;
+            const siblingGap = 170;
+            const centerX = 260;
+            const bottomY = Math.max(steps.length * rowGap, 180);
+            const nodes = [];
+            const links = [];
+
+            nodes.push({
+                id: "leaf",
+                h: proof.leafHash,
+                label: proof.registered ? "leaf" : "empty",
+                x: centerX,
+                y: bottomY,
+                cls: proof.registered ? "proof-current" : "proof-current proof-empty"
+            });
+
+            for (let i = 0; i < steps.length; ++i) {
+                const step = steps[i];
+                const y = bottomY - i * rowGap;
+                const parentY = bottomY - (i + 1) * rowGap;
+                const siblingLeft = step.dir === "L";
+                const siblingX = centerX + (siblingLeft ? -siblingGap : siblingGap);
+                const currentId = i === 0 ? "leaf" : `p-${i - 1}`;
+                const siblingId = `s-${i}`;
+                const parentId = `p-${i}`;
+
+                nodes.push({
+                    id: siblingId,
+                    h: step.sibling,
+                    label: `sib ${i + 1}`,
+                    x: siblingX,
+                    y,
+                    cls: "proof-sibling"
+                });
+                nodes.push({
+                    id: parentId,
+                    h: step.result,
+                    label: i === steps.length - 1 ? "root" : `hash ${i + 1}`,
+                    x: centerX,
+                    y: parentY,
+                    cls: "proof-current"
+                });
+                links.push({ source: currentId, target: parentId, cls: "highlight" });
+                links.push({ source: siblingId, target: parentId, cls: "" });
+            }
+
+            const byId = new Map(nodes.map(n => [n.id, n]));
+            const g = svgGroup.append("g");
+            g.selectAll(".link")
+                .data(links)
+                .enter().append("path")
+                .attr("class", d => `link ${d.cls}`)
+                .attr("d", d => {
+                    const s = byId.get(d.source);
+                    const t = byId.get(d.target);
+                    return `M${s.x},${s.y} C${s.x},${(s.y + t.y) / 2} ${t.x},${(s.y + t.y) / 2} ${t.x},${t.y}`;
+                });
+
+            const node = g.selectAll(".node")
+                .data(nodes)
+                .enter().append("g")
+                .attr("class", d => `node ${d.cls}`)
+                .attr("transform", d => `translate(${d.x},${d.y})`);
+
+            node.append("circle").attr("r", 13);
+            node.append("text")
+                .attr("dy", "-1.55em")
+                .style("font-size", "10px")
+                .text(d => d.label);
+            node.append("text")
+                .attr("dy", "0.35em")
+                .text(d => shortHash(d.h, 6));
+
+            const bounds = svgGroup.node().getBBox();
+            applyFitTransform(bounds, 130, 0.95);
+        }
+
+        function applyFitTransform(bounds, padding = 80, maxScale = 0.85) {
+            const svgEl = document.getElementById('mmr-svg');
+            const cw = svgEl.clientWidth;
+            const ch = svgEl.clientHeight;
+            const scale = Math.min(
+                (cw - padding) / Math.max(bounds.width, 1),
+                (ch - padding) / Math.max(bounds.height, 1),
+                maxScale
+            );
+            const tx = (cw - bounds.width * scale) / 2 - bounds.x * scale;
+            const ty = (ch - bounds.height * scale) / 2 - bounds.y * scale;
+            svg.transition().duration(450).call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+        }
+
+        async function updateSparseVisualization(pathIds = []) {
+            const data = await apiCall('/api/smt');
+            if (smtAnimationBusy) {
+                pendingSmtRender = { data, pathIds };
+                return;
+            }
+            await renderSparseBuildPlayback(data, pathIds);
+        }
+
+        async function renderSparseBuildPlayback(data, pathIds = []) {
+            const renderVersion = ++smtRenderVersion;
+            smtAnimationBusy = true;
+            svgGroup.selectAll("*").remove();
+            if (!data || !data.tree) {
+                smtAnimationBusy = false;
+                return;
+            }
+
+            const entryByHash = {};
+            (data.entries || []).forEach(e => { entryByHash[e.hash] = e; });
+
+            const svgEl = document.getElementById('mmr-svg');
+            const cw = svgEl.clientWidth;
+            const ch = svgEl.clientHeight;
+            const layerPauseMs = 900;
+            const vectorTree = buildSmtVectorLayers(data, cw);
+            if (vectorTree.nodes.length === 0) {
+                smtAnimationBusy = false;
+                return;
+            }
+
+            const g = svgGroup.append("g").attr("transform", "translate(80,70)");
+            const nodes = vectorTree.nodes;
+            const links = vectorTree.links;
+
+            const link = g.selectAll(".link")
+                .data(links)
+                .enter().append("path")
+                .attr("class", "link")
+                .attr("d", d3.linkVertical().x(d => d.x).y(d => d.y))
+                .attr("opacity", 0);
+
+            const node = g.selectAll(".node")
+                .data(nodes)
+                .enter().append("g")
+                .attr("class", d => {
+                    const entry = entryByHash[d.h];
+                    let cls = "node internal ";
+                    if (d.level === 0) cls = "node leaf ";
+                    if (entry) cls += entry.hasVoted ? "smt-voted " : "smt-unvoted ";
+                    return cls;
+                })
+                .attr("transform", d => `translate(${d.x},${d.y})`)
+                .attr("opacity", 0)
+                .on("mouseover", (event, d) => showSmtTooltip(event, { data: d, children: d.level > 0 }, entryByHash))
+                .on("mousemove", moveTooltip)
+                .on("mouseleave", hideTooltip);
+
+            node.append("circle")
+                .attr("r", 2);
+            node.append("text")
+                .attr("dy", "0.3em")
+                .text(d => (d.short || d.h).substring(0, 4) + "..");
+
+            applyFitTransform(svgGroup.node().getBBox(), 110, 0.78);
+
+            const revealNodes = async (selection, delayFn) => {
+                if (selection.empty() || renderVersion !== smtRenderVersion) return;
+                await selection
+                    .transition()
+                    .delay(delayFn)
+                    .duration(700)
+                    .attr("opacity", 1)
+                    .select("circle")
+                    .attr("r", 10)
+                    .end()
+                    .catch(() => {});
+                await sleep(layerPauseMs);
+            };
+
+            const revealLinks = async (selection) => {
+                if (selection.empty() || renderVersion !== smtRenderVersion) return;
+                await selection
+                    .transition()
+                    .duration(650)
+                    .attr("opacity", 1)
+                    .end()
+                    .catch(() => {});
+            };
+
+            const leafNodes = node
+                .filter(d => !d.children)
+                .sort((a, b) => a.x - b.x);
+            leafNodes
+                .attr("opacity", 1)
+                .select("circle")
+                .attr("r", 10);
+            await sleep(layerPauseMs);
+
+            for (let level = 1; level < vectorTree.layers.length; ++level) {
+                if (renderVersion !== smtRenderVersion) break;
+                const layerNodes = node.filter(d => d.level === level);
+                const layerLinks = link.filter(d => d.parentLevel === level);
+                await revealLinks(layerLinks);
+                await revealNodes(layerNodes, () => 0);
+            }
+
+            smtAnimationBusy = false;
+            if (pendingSmtRender) {
+                const next = pendingSmtRender;
+                pendingSmtRender = null;
+                await renderSparseBuildPlayback(next.data, next.pathIds);
+            }
+        }
+
+        // --- Event Listeners & Actions ---
+        
+        function startPolling() {
+            if (!pollingInterval) pollingInterval = setInterval(updateDashboard, 500);
+        }
+
+        function stopSimulationOnClose() {
+            try {
+                fetch('/api/action?cmd=stop_all', { keepalive: true }).catch(() => {});
+            } catch (_) {}
+        }
+
+        window.addEventListener('pagehide', stopSimulationOnClose);
+        window.addEventListener('beforeunload', stopSimulationOnClose);
+
+        document.getElementById('btn-config').addEventListener('click', async () => {
+            const mv = document.getElementById('cfg-max').value || -1;
+            const iv = document.getElementById('cfg-interval').value || 10;
+            await apiCall(`/api/action?cmd=configure&votes=${mv}&interval=${iv}`);
+            pendingSmtRender = null;
+            smtAnimationBusy = false;
+            updateDashboard();
+        });
+
+        document.getElementById('btn-load').addEventListener('click', async () => {
+            const p = document.getElementById('cfg-path').value;
+            await apiCall(`/api/action?cmd=load&path=${encodeURIComponent(p)}`);
+            pendingSmtRender = null;
+            smtAnimationBusy = false;
+            updateDashboard();
+        });
+
+        document.getElementById('btn-step').addEventListener('click', async () => {
+            const res = await apiCall('/api/step_attempt');
+            if (res && res.verification) rememberProofPath(res.verification);
+            showVoteProof(res);
+            updateDashboard();
+        });
+
+        document.getElementById('btn-run').addEventListener('click', async () => {
+            await apiCall('/api/action?cmd=run&rate=200');
+            updateDashboard();
+        });
+
+        document.getElementById('btn-stop').addEventListener('click', async () => {
+            await apiCall('/api/action?cmd=stop');
+            updateDashboard();
+        });
+
+        document.getElementById('btn-reset').addEventListener('click', async () => {
+            await apiCall('/api/action?cmd=reset');
+            candidates = [];
+            lastLeafCount = -1;
+            lastSmtRoot = "";
+            pendingSmtRender = null;
+            smtAnimationBusy = false;
+            activeSmtPath = [];
+            document.getElementById('proof-panel').style.display = 'none';
+            manualVoteIndex = 1;
+            updateDashboard();
+        });
+
+        document.getElementById('tab-mmr').addEventListener('click', () => {
+            currentViz = "mmr";
+            document.getElementById('tab-mmr').classList.add('active');
+            document.getElementById('tab-smt').classList.remove('active');
+            updateDashboard();
+            updateVisualization();
+        });
+
+        document.getElementById('tab-smt').addEventListener('click', () => {
+            currentViz = "smt";
+            document.getElementById('tab-mmr').classList.remove('active');
+            document.getElementById('tab-smt').classList.add('active');
+            updateDashboard();
+            updateVisualization();
+        });
+
+        // --- Modals ---
+        function openModal(id) { document.getElementById(id).style.display = 'flex'; }
+        function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
+        function populateCandidateDropdowns() {
+            const opts = candidates.map(c => `<option value="${c}">${c}</option>`).join('');
+            document.getElementById('manual-candidate').innerHTML = opts;
+            document.getElementById('tamper-candidate').innerHTML = opts;
+        }
+
+        // Manual Vote
+        document.getElementById('btn-vote-modal').addEventListener('click', () => {
+            document.getElementById('manual-voter').value = `MANUAL-${String(manualVoteIndex).padStart(3, '0')}`;
+            document.getElementById('vote-proof-area').classList.add('hidden');
+            document.getElementById('vote-proof-area').innerHTML = '';
+            openModal('modal-vote');
+        });
+
+        document.getElementById('btn-submit-vote').addEventListener('click', async () => {
+            const v = document.getElementById('manual-voter').value;
+            const c = document.getElementById('manual-candidate').value;
+            if(!v || !c) return;
+            closeModal('modal-vote');
+            const res = await apiCall(`/api/vote_attempt?voter=${encodeURIComponent(v)}&candidate=${encodeURIComponent(c)}`);
+            if (res && res.cast && res.verification) {
+                highlightProofPath(res.verification);
+            } else if (res && res.verification) {
+                drawSmtProofVisualization(res.verification);
+            }
+            showVoteProof(res);
+            if (res && res.cast) {
+                manualVoteIndex++;
+            }
+            updateDashboard();
+        });
+
+        function showVoteProof(res) {
+            const area = document.getElementById('proof-panel');
+            area.style.display = 'block';
+            if (!res || !res.verification) {
+                area.innerHTML = `<div class="text-danger">Could not contact the simulation server. Restart the dashboard and try again.</div>`;
+                return;
+            }
+            const v = res.verification;
+            const reason = res.error || v.error || "vote rejected";
+            const verdict = res.cast ? "VERIFIED - vote cast" : `REJECTED - ${reason}`;
+            const cls = res.cast ? "text-success" : "text-danger";
+            const proofLabel = v.proofType === "non-membership"
+                ? "Non-membership proof: the voter key resolves to the empty leaf, so voting is blocked."
+                : "Membership proof: the voter key resolves to a registered voter leaf.";
+            const rows = (v.steps || []).map((s, i) =>
+                `[${i + 1}] compare ${shortHash(s.current, 18)} with ${shortHash(s.sibling, 18)} (${s.dir}) => ${shortHash(s.result, 18)}`
+            ).join("<br>");
+            area.innerHTML = `
+                <div class="${cls}" style="font-weight:700; margin-bottom:0.5rem;">${verdict}</div>
+                <div>${proofLabel}</div>
+                <div>Voter: ${v.voter}</div>
+                <div>Key bits: ${v.keyBits}</div>
+                <div>Leaf: ${shortHash(v.leafHash, 22)} | Root: ${shortHash(v.root, 22)}</div>
+                <div style="margin-top:0.5rem;">${rows || "-"}</div>
+            `;
+        }
+
+        // Tamper
+        document.getElementById('btn-tamper-modal').addEventListener('click', async () => {
+            const votes = await apiCall('/api/votes');
+            const tbody = document.querySelector('#tamper-table tbody');
+            tbody.innerHTML = votes.map(v => `
+                <tr onclick="selectTamper(${v.i}, '${v.voter}', '${v.candidate}')">
+                    <td>${v.i}</td><td>${v.voter}</td><td>${v.candidate}</td><td>${v.hash}...</td>
+                </tr>
+            `).join('');
+            document.getElementById('tamper-action-area').classList.add('hidden');
+            openModal('modal-tamper');
+        });
+
+        let tamperSelIdx = -1;
+        window.selectTamper = function(idx, voter, cand) {
+            tamperSelIdx = idx;
+            document.getElementById('tamper-sel-idx').textContent = idx;
+            document.getElementById('tamper-sel-info').textContent = `${voter} (${cand})`;
+            document.getElementById('tamper-action-area').classList.remove('hidden');
+        };
+
+        document.getElementById('btn-submit-tamper').addEventListener('click', async () => {
+            if (tamperSelIdx < 0) return;
+            const c = document.getElementById('tamper-candidate').value;
+            await apiCall(`/api/action?cmd=tamper_leaf&index=${tamperSelIdx}&candidate=${encodeURIComponent(c)}`);
+            closeModal('modal-tamper');
+            updateDashboard();
+        });
+
+        // Verify
+        document.getElementById('btn-verify-modal').addEventListener('click', async () => {
+            const votes = await apiCall('/api/votes');
+            const tbody = document.querySelector('#verify-table tbody');
+            tbody.innerHTML = votes.map(v => `
+                <tr onclick="runVerify(${v.i})">
+                    <td>${v.i}</td><td>${v.voter}</td><td>${v.candidate}</td><td>${v.hash}...</td>
+                </tr>
+            `).join('');
+            document.getElementById('verify-result-area').classList.add('hidden');
+            openModal('modal-verify');
+        });
+
+        window.runVerify = async function(idx) {
+            const res = await apiCall(`/api/verify?index=${idx}`);
+            const area = document.getElementById('verify-result-area');
+            area.classList.remove('hidden');
+            document.getElementById('vrf-idx').textContent = idx;
+            
+            const badge = document.getElementById('vrf-badge');
+            if (res.ok && res.verified) {
+                badge.className = 'snapshot-badge badge-pass';
+                badge.textContent = 'VERIFIED';
+            } else {
+                badge.className = 'snapshot-badge badge-fail';
+                badge.textContent = 'FAILED';
+            }
+
+            document.getElementById('vrf-root').textContent = res.ok ? res.root : 'Error';
+            
+            if (res.ok && res.steps) {
+                const stepsHtml = res.steps.map((s, i) => `[${i}] ${s.dir} : ${s.sibling}`).join('<br>');
+                document.getElementById('vrf-steps').innerHTML = stepsHtml;
+            } else {
+                document.getElementById('vrf-steps').innerHTML = '-';
+            }
+        };
+
+        // --- Voter Registry ---
+
+        // Auto Register
+        document.getElementById('btn-auto-register').addEventListener('click', async () => {
+            await apiCall('/api/action?cmd=auto_register');
+            updateDashboard();
+        });
+
+        // Stop Auto Register
+        document.getElementById('btn-stop-register').addEventListener('click', async () => {
+            await apiCall('/api/action?cmd=auto_register_stop');
+            updateDashboard();
+        });
+
+        // Manual Register Modal
+        document.getElementById('btn-register-modal').addEventListener('click', () => {
+            document.getElementById('reg-voter-id').value = '';
+            openModal('modal-register');
+        });
+
+        document.getElementById('btn-submit-register').addEventListener('click', async () => {
+            const vid = document.getElementById('reg-voter-id').value.trim();
+            if (!vid) return;
+            await apiCall(`/api/action?cmd=register&voter=${encodeURIComponent(vid)}`);
+            closeModal('modal-register');
+            updateDashboard();
+        });
+
+        // View Registry Modal
+        document.getElementById('btn-registry-modal').addEventListener('click', async () => {
+            const data = await apiCall('/api/registry');
+            if (!data) return;
+            document.getElementById('reg-total-count').textContent = data.count;
+            const tbody = document.querySelector('#registry-table tbody');
+            tbody.innerHTML = (data.voters || []).map((v, i) =>
+                `<tr><td>${i + 1}</td><td>${v.voter}</td><td>${v.hasVoted ? 'Voted' : 'Not voted'}</td></tr>`
+            ).join('');
+            openModal('modal-registry');
+        });
+
+        // Init
+        startPolling();
+
+    </script>
+</body>
+</html>
